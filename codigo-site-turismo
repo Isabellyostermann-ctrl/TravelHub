@@ -1,0 +1,941 @@
+import streamlit as st
+import pymongo
+import pandas as pd
+from bson.objectid import ObjectId
+
+
+# CONFIGURAÇÃO DO BANCO DE DADOS
+
+@st.cache_resource
+def init_connection():
+    return pymongo.MongoClient("mongodb://localhost:27017/")
+
+client = init_connection()
+db = client["app_turismo"]
+
+colecao_usuarios = db["usuarios"]
+colecao_destinos = db["destinos"]
+colecao_dicas = db["dicas"]
+
+
+# INTERFACE STREAMLIT
+
+st.set_page_config(page_title="App de Turismo", layout="wide")
+
+st.sidebar.title("Navegação")
+# Adicionamos o CRUD de Dicas no menu
+menu = st.sidebar.radio("Ir para:", ["Funcionalidade Principal", "CRUD - Destinos", "CRUD - Usuários", "CRUD - Dicas"])
+
+
+# TELA 1: FUNCIONALIDADE PRINCIPAL
+
+if menu == "Funcionalidade Principal":
+    st.title("🌍 Recomendações e Dicas de Viagem")
+    
+    destinos = list(colecao_destinos.find())
+    if destinos:
+        for destino in destinos:
+            with st.expander(f"📍 {destino['nome_destino']} - {destino['cidade']} ({destino['categoria']})"):
+                
+                # Busca as dicas deste destino
+                dicas = list(colecao_dicas.find({"destino_id": str(destino["_id"])}))
+                if dicas:
+                    st.write("💡 **Dicas da Comunidade:**")
+                    for dica in dicas:
+                        # Busca o nome do usuário que escreveu a dica usando o ID salvo nela
+                        nome_autor = "Usuário Desconhecido"
+                        if "usuario_id" in dica:
+                            autor = colecao_usuarios.find_one({"_id": ObjectId(dica["usuario_id"])})
+                            if autor:
+                                nome_autor = autor.get("nome", "Usuário Desconhecido")
+                        
+                        # Exibe a dica com a assinatura do autor!
+                        st.info(f"**{dica.get('titulo', 'Sem Título')}**\n\n{dica.get('descricao', '')}\n\n*✍️ Escrita por: {nome_autor}*")
+                else:
+                    st.write("Ainda não há dicas para este destino.")
+    else:
+        st.info("O banco de dados está vazio. Vá até o menu 'CRUD - Destinos' para adicionar lugares!")
+
+
+# TELA 2: CRUD DE DESTINOS
+
+elif menu == "CRUD - Destinos":
+    st.title("⚙️ Gerenciamento de Destinos")
+    aba_create, aba_read, aba_update, aba_delete = st.tabs(["INSERT", "FIND", "UPDATE", "DELETE"])
+
+    with aba_create:
+        with st.form("form_insert_dest"):
+            nome = st.text_input("Nome do Destino")
+            cidade = st.text_input("Cidade")
+            categoria = st.text_input("Categoria")
+            submit_insert = st.form_submit_button("Inserir Destino")
+            if submit_insert:
+                colecao_destinos.insert_one({"nome_destino": nome, "cidade": cidade, "categoria": categoria})
+                st.success("Destino adicionado!")
+
+    with aba_read:
+        destinos_db = list(colecao_destinos.find())
+        if destinos_db:
+            df = pd.DataFrame(destinos_db)
+            df['_id'] = df['_id'].astype(str)
+            st.dataframe(df, use_container_width=True)
+
+    with aba_update:
+        destinos_lista = list(colecao_destinos.find())
+        if destinos_lista:
+            opcoes = {str(d["_id"]): d["nome_destino"] for d in destinos_lista}
+            id_sel = st.selectbox("Editar Destino", options=list(opcoes.keys()), format_func=lambda x: opcoes[x])
+            dest_atual = colecao_destinos.find_one({"_id": ObjectId(id_sel)})
+            with st.form("form_update_dest"):
+                novo_nome = st.text_input("Nome", value=dest_atual.get("nome_destino", ""))
+                if st.form_submit_button("Atualizar"):
+                    colecao_destinos.update_one({"_id": ObjectId(id_sel)}, {"$set": {"nome_destino": novo_nome}})
+                    st.success("Atualizado!")
+
+    with aba_delete:
+        destinos_del = list(colecao_destinos.find())
+        if destinos_del:
+            opcoes_del = {str(d["_id"]): d["nome_destino"] for d in destinos_del}
+            id_del = st.selectbox("Excluir Destino", options=list(opcoes_del.keys()), format_func=lambda x: opcoes_del[x])
+            if st.button("Excluir", type="primary"):
+                colecao_destinos.delete_one({"_id": ObjectId(id_del)})
+                st.success("Excluído!")
+
+
+# TELA 3: CRUD DE USUÁRIOS
+elif menu == "CRUD - Usuários":
+    st.title("👤 Gerenciamento de Usuários")
+    aba_create_u, aba_read_u, aba_update_u, aba_delete_u = st.tabs(["INSERT", "FIND", "UPDATE", "DELETE"])
+
+    with aba_create_u:
+        with st.form("form_insert_user"):
+            nome_u = st.text_input("Nome do Usuário")
+            email_u = st.text_input("E-mail")
+            if st.form_submit_button("Inserir Usuário"):
+                colecao_usuarios.insert_one({"nome": nome_u, "email": email_u, "pontuacao": 0})
+                st.success("Usuário adicionado!")
+
+    with aba_read_u:
+        usuarios_db = list(colecao_usuarios.find())
+        if usuarios_db:
+            df_u = pd.DataFrame(usuarios_db)
+            df_u['_id'] = df_u['_id'].astype(str)
+            st.dataframe(df_u, use_container_width=True)
+
+    with aba_update_u:
+        usuarios_lista = list(colecao_usuarios.find())
+        if usuarios_lista:
+            opcoes_u = {str(u["_id"]): u.get("nome", "") for u in usuarios_lista}
+            id_sel_u = st.selectbox("Editar Usuário", options=list(opcoes_u.keys()), format_func=lambda x: opcoes_u[x])
+            user_atual = colecao_usuarios.find_one({"_id": ObjectId(id_sel_u)})
+            with st.form("form_update_user"):
+                novo_nome_u = st.text_input("Nome", value=user_atual.get("nome", ""))
+                if st.form_submit_button("Atualizar"):
+                    colecao_usuarios.update_one({"_id": ObjectId(id_sel_u)}, {"$set": {"nome": novo_nome_u}})
+                    st.success("Atualizado!")
+
+    with aba_delete_u:
+        usuarios_del = list(colecao_usuarios.find())
+        if usuarios_del:
+            opcoes_del_u = {str(u["_id"]): u.get("nome", "") for u in usuarios_del}
+            id_del_u = st.selectbox("Excluir Usuário", options=list(opcoes_del_u.keys()), format_func=lambda x: opcoes_del_u[x])
+            if st.button("Excluir", type="primary"):
+                colecao_usuarios.delete_one({"_id": ObjectId(id_del_u)})
+                st.success("Excluído!")
+
+
+# TELA 4: CRUD DE DICAS
+
+elif menu == "CRUD - Dicas":
+    st.title("💡 Gerenciamento de Dicas")
+    aba_create_d, aba_read_d = st.tabs(["INSERT", "FIND"])
+
+    with aba_create_d:
+        usuarios = list(colecao_usuarios.find())
+        destinos = list(colecao_destinos.find())
+
+        if not usuarios or not destinos:
+            st.warning("Cadastre pelo menos um usuário e um destino antes de criar dicas!")
+        else:
+            opcoes_u = {str(u["_id"]): u["nome"] for u in usuarios}
+            opcoes_d = {str(d["_id"]): d["nome_destino"] for d in destinos}
+
+            with st.form("form_insert_dica"):
+                # Aqui você seleciona as relações!
+                user_id = st.selectbox("Quem está escrevendo?", options=list(opcoes_u.keys()), format_func=lambda x: opcoes_u[x])
+                dest_id = st.selectbox("Sobre qual destino?", options=list(opcoes_d.keys()), format_func=lambda x: opcoes_d[x])
+                
+                titulo = st.text_input("Título da Dica")
+                descricao = st.text_area("Descrição (Conte a sua experiência)")
+                
+                if st.form_submit_button("Inserir Dica"):
+                    nova_dica = {
+                        "titulo": titulo,
+                        "descricao": descricao,
+                        "usuario_id": user_id,
+                        "destino_id": dest_id,
+                        "curtidas": 0
+                    }
+                    colecao_dicas.insert_one(nova_dica)
+                    st.success("Dica cadastrada com sucesso!")
+
+    with aba_read_d:
+        dicas_db = list(colecao_dicas.find())
+        if dicas_db:
+            df_d = pd.DataFrame(dicas_db)
+            df_d['_id'] = df_d['_id'].astype(str)
+            st.dataframe(df_d, use_container_width=True)
+        else:
+            st.info("Nenhuma dica cadastrada.")import streamlit as st
+import pymongo
+import pandas as pd
+from bson.objectid import ObjectId
+
+
+# CONFIGURAÇÃO DO BANCO DE DADOS
+
+@st.cache_resource
+def init_connection():
+    return pymongo.MongoClient("mongodb://localhost:27017/")
+
+client = init_connection()
+db = client["app_turismo"]
+
+colecao_usuarios = db["usuarios"]
+colecao_destinos = db["destinos"]
+colecao_dicas = db["dicas"]
+
+
+# INTERFACE STREAMLIT
+
+st.set_page_config(page_title="App de Turismo", layout="wide")
+
+st.sidebar.title("Navegação")
+# Adicionamos o CRUD de Dicas no menu
+menu = st.sidebar.radio("Ir para:", ["Funcionalidade Principal", "CRUD - Destinos", "CRUD - Usuários", "CRUD - Dicas"])
+
+
+# TELA 1: FUNCIONALIDADE PRINCIPAL
+
+if menu == "Funcionalidade Principal":
+    st.title("🌍 Recomendações e Dicas de Viagem")
+    
+    destinos = list(colecao_destinos.find())
+    if destinos:
+        for destino in destinos:
+            with st.expander(f"📍 {destino['nome_destino']} - {destino['cidade']} ({destino['categoria']})"):
+                
+                # Busca as dicas deste destino
+                dicas = list(colecao_dicas.find({"destino_id": str(destino["_id"])}))
+                if dicas:
+                    st.write("💡 **Dicas da Comunidade:**")
+                    for dica in dicas:
+                        # Busca o nome do usuário que escreveu a dica usando o ID salvo nela
+                        nome_autor = "Usuário Desconhecido"
+                        if "usuario_id" in dica:
+                            autor = colecao_usuarios.find_one({"_id": ObjectId(dica["usuario_id"])})
+                            if autor:
+                                nome_autor = autor.get("nome", "Usuário Desconhecido")
+                        
+                        # Exibe a dica com a assinatura do autor!
+                        st.info(f"**{dica.get('titulo', 'Sem Título')}**\n\n{dica.get('descricao', '')}\n\n*✍️ Escrita por: {nome_autor}*")
+                else:
+                    st.write("Ainda não há dicas para este destino.")
+    else:
+        st.info("O banco de dados está vazio. Vá até o menu 'CRUD - Destinos' para adicionar lugares!")
+
+
+# TELA 2: CRUD DE DESTINOS
+
+elif menu == "CRUD - Destinos":
+    st.title("⚙️ Gerenciamento de Destinos")
+    aba_create, aba_read, aba_update, aba_delete = st.tabs(["INSERT", "FIND", "UPDATE", "DELETE"])
+
+    with aba_create:
+        with st.form("form_insert_dest"):
+            nome = st.text_input("Nome do Destino")
+            cidade = st.text_input("Cidade")
+            categoria = st.text_input("Categoria")
+            submit_insert = st.form_submit_button("Inserir Destino")
+            if submit_insert:
+                colecao_destinos.insert_one({"nome_destino": nome, "cidade": cidade, "categoria": categoria})
+                st.success("Destino adicionado!")
+
+    with aba_read:
+        destinos_db = list(colecao_destinos.find())
+        if destinos_db:
+            df = pd.DataFrame(destinos_db)
+            df['_id'] = df['_id'].astype(str)
+            st.dataframe(df, use_container_width=True)
+
+    with aba_update:
+        destinos_lista = list(colecao_destinos.find())
+        if destinos_lista:
+            opcoes = {str(d["_id"]): d["nome_destino"] for d in destinos_lista}
+            id_sel = st.selectbox("Editar Destino", options=list(opcoes.keys()), format_func=lambda x: opcoes[x])
+            dest_atual = colecao_destinos.find_one({"_id": ObjectId(id_sel)})
+            with st.form("form_update_dest"):
+                novo_nome = st.text_input("Nome", value=dest_atual.get("nome_destino", ""))
+                if st.form_submit_button("Atualizar"):
+                    colecao_destinos.update_one({"_id": ObjectId(id_sel)}, {"$set": {"nome_destino": novo_nome}})
+                    st.success("Atualizado!")
+
+    with aba_delete:
+        destinos_del = list(colecao_destinos.find())
+        if destinos_del:
+            opcoes_del = {str(d["_id"]): d["nome_destino"] for d in destinos_del}
+            id_del = st.selectbox("Excluir Destino", options=list(opcoes_del.keys()), format_func=lambda x: opcoes_del[x])
+            if st.button("Excluir", type="primary"):
+                colecao_destinos.delete_one({"_id": ObjectId(id_del)})
+                st.success("Excluído!")
+
+
+# TELA 3: CRUD DE USUÁRIOS
+elif menu == "CRUD - Usuários":
+    st.title("👤 Gerenciamento de Usuários")
+    aba_create_u, aba_read_u, aba_update_u, aba_delete_u = st.tabs(["INSERT", "FIND", "UPDATE", "DELETE"])
+
+    with aba_create_u:
+        with st.form("form_insert_user"):
+            nome_u = st.text_input("Nome do Usuário")
+            email_u = st.text_input("E-mail")
+            if st.form_submit_button("Inserir Usuário"):
+                colecao_usuarios.insert_one({"nome": nome_u, "email": email_u, "pontuacao": 0})
+                st.success("Usuário adicionado!")
+
+    with aba_read_u:
+        usuarios_db = list(colecao_usuarios.find())
+        if usuarios_db:
+            df_u = pd.DataFrame(usuarios_db)
+            df_u['_id'] = df_u['_id'].astype(str)
+            st.dataframe(df_u, use_container_width=True)
+
+    with aba_update_u:
+        usuarios_lista = list(colecao_usuarios.find())
+        if usuarios_lista:
+            opcoes_u = {str(u["_id"]): u.get("nome", "") for u in usuarios_lista}
+            id_sel_u = st.selectbox("Editar Usuário", options=list(opcoes_u.keys()), format_func=lambda x: opcoes_u[x])
+            user_atual = colecao_usuarios.find_one({"_id": ObjectId(id_sel_u)})
+            with st.form("form_update_user"):
+                novo_nome_u = st.text_input("Nome", value=user_atual.get("nome", ""))
+                if st.form_submit_button("Atualizar"):
+                    colecao_usuarios.update_one({"_id": ObjectId(id_sel_u)}, {"$set": {"nome": novo_nome_u}})
+                    st.success("Atualizado!")
+
+    with aba_delete_u:
+        usuarios_del = list(colecao_usuarios.find())
+        if usuarios_del:
+            opcoes_del_u = {str(u["_id"]): u.get("nome", "") for u in usuarios_del}
+            id_del_u = st.selectbox("Excluir Usuário", options=list(opcoes_del_u.keys()), format_func=lambda x: opcoes_del_u[x])
+            if st.button("Excluir", type="primary"):
+                colecao_usuarios.delete_one({"_id": ObjectId(id_del_u)})
+                st.success("Excluído!")
+
+
+# TELA 4: CRUD DE DICAS
+
+elif menu == "CRUD - Dicas":
+    st.title("💡 Gerenciamento de Dicas")
+    aba_create_d, aba_read_d = st.tabs(["INSERT", "FIND"])
+
+    with aba_create_d:
+        usuarios = list(colecao_usuarios.find())
+        destinos = list(colecao_destinos.find())
+
+        if not usuarios or not destinos:
+            st.warning("Cadastre pelo menos um usuário e um destino antes de criar dicas!")
+        else:
+            opcoes_u = {str(u["_id"]): u["nome"] for u in usuarios}
+            opcoes_d = {str(d["_id"]): d["nome_destino"] for d in destinos}
+
+            with st.form("form_insert_dica"):
+                # Aqui você seleciona as relações!
+                user_id = st.selectbox("Quem está escrevendo?", options=list(opcoes_u.keys()), format_func=lambda x: opcoes_u[x])
+                dest_id = st.selectbox("Sobre qual destino?", options=list(opcoes_d.keys()), format_func=lambda x: opcoes_d[x])
+                
+                titulo = st.text_input("Título da Dica")
+                descricao = st.text_area("Descrição (Conte a sua experiência)")
+                
+                if st.form_submit_button("Inserir Dica"):
+                    nova_dica = {
+                        "titulo": titulo,
+                        "descricao": descricao,
+                        "usuario_id": user_id,
+                        "destino_id": dest_id,
+                        "curtidas": 0
+                    }
+                    colecao_dicas.insert_one(nova_dica)
+                    st.success("Dica cadastrada com sucesso!")
+
+    with aba_read_d:
+        dicas_db = list(colecao_dicas.find())
+        if dicas_db:
+            df_d = pd.DataFrame(dicas_db)
+            df_d['_id'] = df_d['_id'].astype(str)
+            st.dataframe(df_d, use_container_width=True)
+        else:
+            st.info("Nenhuma dica cadastrada.")import streamlit as st
+import pymongo
+import pandas as pd
+from bson.objectid import ObjectId
+
+
+# CONFIGURAÇÃO DO BANCO DE DADOS
+
+@st.cache_resource
+def init_connection():
+    return pymongo.MongoClient("mongodb://localhost:27017/")
+
+client = init_connection()
+db = client["app_turismo"]
+
+colecao_usuarios = db["usuarios"]
+colecao_destinos = db["destinos"]
+colecao_dicas = db["dicas"]
+
+
+# INTERFACE STREAMLIT
+
+st.set_page_config(page_title="App de Turismo", layout="wide")
+
+st.sidebar.title("Navegação")
+# Adicionamos o CRUD de Dicas no menu
+menu = st.sidebar.radio("Ir para:", ["Funcionalidade Principal", "CRUD - Destinos", "CRUD - Usuários", "CRUD - Dicas"])
+
+
+# TELA 1: FUNCIONALIDADE PRINCIPAL
+
+if menu == "Funcionalidade Principal":
+    st.title("🌍 Recomendações e Dicas de Viagem")
+    
+    destinos = list(colecao_destinos.find())
+    if destinos:
+        for destino in destinos:
+            with st.expander(f"📍 {destino['nome_destino']} - {destino['cidade']} ({destino['categoria']})"):
+                
+                # Busca as dicas deste destino
+                dicas = list(colecao_dicas.find({"destino_id": str(destino["_id"])}))
+                if dicas:
+                    st.write("💡 **Dicas da Comunidade:**")
+                    for dica in dicas:
+                        # Busca o nome do usuário que escreveu a dica usando o ID salvo nela
+                        nome_autor = "Usuário Desconhecido"
+                        if "usuario_id" in dica:
+                            autor = colecao_usuarios.find_one({"_id": ObjectId(dica["usuario_id"])})
+                            if autor:
+                                nome_autor = autor.get("nome", "Usuário Desconhecido")
+                        
+                        # Exibe a dica com a assinatura do autor!
+                        st.info(f"**{dica.get('titulo', 'Sem Título')}**\n\n{dica.get('descricao', '')}\n\n*✍️ Escrita por: {nome_autor}*")
+                else:
+                    st.write("Ainda não há dicas para este destino.")
+    else:
+        st.info("O banco de dados está vazio. Vá até o menu 'CRUD - Destinos' para adicionar lugares!")
+
+
+# TELA 2: CRUD DE DESTINOS
+
+elif menu == "CRUD - Destinos":
+    st.title("⚙️ Gerenciamento de Destinos")
+    aba_create, aba_read, aba_update, aba_delete = st.tabs(["INSERT", "FIND", "UPDATE", "DELETE"])
+
+    with aba_create:
+        with st.form("form_insert_dest"):
+            nome = st.text_input("Nome do Destino")
+            cidade = st.text_input("Cidade")
+            categoria = st.text_input("Categoria")
+            submit_insert = st.form_submit_button("Inserir Destino")
+            if submit_insert:
+                colecao_destinos.insert_one({"nome_destino": nome, "cidade": cidade, "categoria": categoria})
+                st.success("Destino adicionado!")
+
+    with aba_read:
+        destinos_db = list(colecao_destinos.find())
+        if destinos_db:
+            df = pd.DataFrame(destinos_db)
+            df['_id'] = df['_id'].astype(str)
+            st.dataframe(df, use_container_width=True)
+
+    with aba_update:
+        destinos_lista = list(colecao_destinos.find())
+        if destinos_lista:
+            opcoes = {str(d["_id"]): d["nome_destino"] for d in destinos_lista}
+            id_sel = st.selectbox("Editar Destino", options=list(opcoes.keys()), format_func=lambda x: opcoes[x])
+            dest_atual = colecao_destinos.find_one({"_id": ObjectId(id_sel)})
+            with st.form("form_update_dest"):
+                novo_nome = st.text_input("Nome", value=dest_atual.get("nome_destino", ""))
+                if st.form_submit_button("Atualizar"):
+                    colecao_destinos.update_one({"_id": ObjectId(id_sel)}, {"$set": {"nome_destino": novo_nome}})
+                    st.success("Atualizado!")
+
+    with aba_delete:
+        destinos_del = list(colecao_destinos.find())
+        if destinos_del:
+            opcoes_del = {str(d["_id"]): d["nome_destino"] for d in destinos_del}
+            id_del = st.selectbox("Excluir Destino", options=list(opcoes_del.keys()), format_func=lambda x: opcoes_del[x])
+            if st.button("Excluir", type="primary"):
+                colecao_destinos.delete_one({"_id": ObjectId(id_del)})
+                st.success("Excluído!")
+
+
+# TELA 3: CRUD DE USUÁRIOS
+elif menu == "CRUD - Usuários":
+    st.title("👤 Gerenciamento de Usuários")
+    aba_create_u, aba_read_u, aba_update_u, aba_delete_u = st.tabs(["INSERT", "FIND", "UPDATE", "DELETE"])
+
+    with aba_create_u:
+        with st.form("form_insert_user"):
+            nome_u = st.text_input("Nome do Usuário")
+            email_u = st.text_input("E-mail")
+            if st.form_submit_button("Inserir Usuário"):
+                colecao_usuarios.insert_one({"nome": nome_u, "email": email_u, "pontuacao": 0})
+                st.success("Usuário adicionado!")
+
+    with aba_read_u:
+        usuarios_db = list(colecao_usuarios.find())
+        if usuarios_db:
+            df_u = pd.DataFrame(usuarios_db)
+            df_u['_id'] = df_u['_id'].astype(str)
+            st.dataframe(df_u, use_container_width=True)
+
+    with aba_update_u:
+        usuarios_lista = list(colecao_usuarios.find())
+        if usuarios_lista:
+            opcoes_u = {str(u["_id"]): u.get("nome", "") for u in usuarios_lista}
+            id_sel_u = st.selectbox("Editar Usuário", options=list(opcoes_u.keys()), format_func=lambda x: opcoes_u[x])
+            user_atual = colecao_usuarios.find_one({"_id": ObjectId(id_sel_u)})
+            with st.form("form_update_user"):
+                novo_nome_u = st.text_input("Nome", value=user_atual.get("nome", ""))
+                if st.form_submit_button("Atualizar"):
+                    colecao_usuarios.update_one({"_id": ObjectId(id_sel_u)}, {"$set": {"nome": novo_nome_u}})
+                    st.success("Atualizado!")
+
+    with aba_delete_u:
+        usuarios_del = list(colecao_usuarios.find())
+        if usuarios_del:
+            opcoes_del_u = {str(u["_id"]): u.get("nome", "") for u in usuarios_del}
+            id_del_u = st.selectbox("Excluir Usuário", options=list(opcoes_del_u.keys()), format_func=lambda x: opcoes_del_u[x])
+            if st.button("Excluir", type="primary"):
+                colecao_usuarios.delete_one({"_id": ObjectId(id_del_u)})
+                st.success("Excluído!")
+
+
+# TELA 4: CRUD DE DICAS
+
+elif menu == "CRUD - Dicas":
+    st.title("💡 Gerenciamento de Dicas")
+    aba_create_d, aba_read_d = st.tabs(["INSERT", "FIND"])
+
+    with aba_create_d:
+        usuarios = list(colecao_usuarios.find())
+        destinos = list(colecao_destinos.find())
+
+        if not usuarios or not destinos:
+            st.warning("Cadastre pelo menos um usuário e um destino antes de criar dicas!")
+        else:
+            opcoes_u = {str(u["_id"]): u["nome"] for u in usuarios}
+            opcoes_d = {str(d["_id"]): d["nome_destino"] for d in destinos}
+
+            with st.form("form_insert_dica"):
+                # Aqui você seleciona as relações!
+                user_id = st.selectbox("Quem está escrevendo?", options=list(opcoes_u.keys()), format_func=lambda x: opcoes_u[x])
+                dest_id = st.selectbox("Sobre qual destino?", options=list(opcoes_d.keys()), format_func=lambda x: opcoes_d[x])
+                
+                titulo = st.text_input("Título da Dica")
+                descricao = st.text_area("Descrição (Conte a sua experiência)")
+                
+                if st.form_submit_button("Inserir Dica"):
+                    nova_dica = {
+                        "titulo": titulo,
+                        "descricao": descricao,
+                        "usuario_id": user_id,
+                        "destino_id": dest_id,
+                        "curtidas": 0
+                    }
+                    colecao_dicas.insert_one(nova_dica)
+                    st.success("Dica cadastrada com sucesso!")
+
+    with aba_read_d:
+        dicas_db = list(colecao_dicas.find())
+        if dicas_db:
+            df_d = pd.DataFrame(dicas_db)
+            df_d['_id'] = df_d['_id'].astype(str)
+            st.dataframe(df_d, use_container_width=True)
+        else:
+            st.info("Nenhuma dica cadastrada.")import streamlit as st
+import pymongo
+import pandas as pd
+from bson.objectid import ObjectId
+
+
+# CONFIGURAÇÃO DO BANCO DE DADOS
+
+@st.cache_resource
+def init_connection():
+    return pymongo.MongoClient("mongodb://localhost:27017/")
+
+client = init_connection()
+db = client["app_turismo"]
+
+colecao_usuarios = db["usuarios"]
+colecao_destinos = db["destinos"]
+colecao_dicas = db["dicas"]
+
+
+# INTERFACE STREAMLIT
+
+st.set_page_config(page_title="App de Turismo", layout="wide")
+
+st.sidebar.title("Navegação")
+# Adicionamos o CRUD de Dicas no menu
+menu = st.sidebar.radio("Ir para:", ["Funcionalidade Principal", "CRUD - Destinos", "CRUD - Usuários", "CRUD - Dicas"])
+
+
+# TELA 1: FUNCIONALIDADE PRINCIPAL
+
+if menu == "Funcionalidade Principal":
+    st.title("🌍 Recomendações e Dicas de Viagem")
+    
+    destinos = list(colecao_destinos.find())
+    if destinos:
+        for destino in destinos:
+            with st.expander(f"📍 {destino['nome_destino']} - {destino['cidade']} ({destino['categoria']})"):
+                
+                # Busca as dicas deste destino
+                dicas = list(colecao_dicas.find({"destino_id": str(destino["_id"])}))
+                if dicas:
+                    st.write("💡 **Dicas da Comunidade:**")
+                    for dica in dicas:
+                        # Busca o nome do usuário que escreveu a dica usando o ID salvo nela
+                        nome_autor = "Usuário Desconhecido"
+                        if "usuario_id" in dica:
+                            autor = colecao_usuarios.find_one({"_id": ObjectId(dica["usuario_id"])})
+                            if autor:
+                                nome_autor = autor.get("nome", "Usuário Desconhecido")
+                        
+                        # Exibe a dica com a assinatura do autor!
+                        st.info(f"**{dica.get('titulo', 'Sem Título')}**\n\n{dica.get('descricao', '')}\n\n*✍️ Escrita por: {nome_autor}*")
+                else:
+                    st.write("Ainda não há dicas para este destino.")
+    else:
+        st.info("O banco de dados está vazio. Vá até o menu 'CRUD - Destinos' para adicionar lugares!")
+
+
+# TELA 2: CRUD DE DESTINOS
+
+elif menu == "CRUD - Destinos":
+    st.title("⚙️ Gerenciamento de Destinos")
+    aba_create, aba_read, aba_update, aba_delete = st.tabs(["INSERT", "FIND", "UPDATE", "DELETE"])
+
+    with aba_create:
+        with st.form("form_insert_dest"):
+            nome = st.text_input("Nome do Destino")
+            cidade = st.text_input("Cidade")
+            categoria = st.text_input("Categoria")
+            submit_insert = st.form_submit_button("Inserir Destino")
+            if submit_insert:
+                colecao_destinos.insert_one({"nome_destino": nome, "cidade": cidade, "categoria": categoria})
+                st.success("Destino adicionado!")
+
+    with aba_read:
+        destinos_db = list(colecao_destinos.find())
+        if destinos_db:
+            df = pd.DataFrame(destinos_db)
+            df['_id'] = df['_id'].astype(str)
+            st.dataframe(df, use_container_width=True)
+
+    with aba_update:
+        destinos_lista = list(colecao_destinos.find())
+        if destinos_lista:
+            opcoes = {str(d["_id"]): d["nome_destino"] for d in destinos_lista}
+            id_sel = st.selectbox("Editar Destino", options=list(opcoes.keys()), format_func=lambda x: opcoes[x])
+            dest_atual = colecao_destinos.find_one({"_id": ObjectId(id_sel)})
+            with st.form("form_update_dest"):
+                novo_nome = st.text_input("Nome", value=dest_atual.get("nome_destino", ""))
+                if st.form_submit_button("Atualizar"):
+                    colecao_destinos.update_one({"_id": ObjectId(id_sel)}, {"$set": {"nome_destino": novo_nome}})
+                    st.success("Atualizado!")
+
+    with aba_delete:
+        destinos_del = list(colecao_destinos.find())
+        if destinos_del:
+            opcoes_del = {str(d["_id"]): d["nome_destino"] for d in destinos_del}
+            id_del = st.selectbox("Excluir Destino", options=list(opcoes_del.keys()), format_func=lambda x: opcoes_del[x])
+            if st.button("Excluir", type="primary"):
+                colecao_destinos.delete_one({"_id": ObjectId(id_del)})
+                st.success("Excluído!")
+
+
+# TELA 3: CRUD DE USUÁRIOS
+elif menu == "CRUD - Usuários":
+    st.title("👤 Gerenciamento de Usuários")
+    aba_create_u, aba_read_u, aba_update_u, aba_delete_u = st.tabs(["INSERT", "FIND", "UPDATE", "DELETE"])
+
+    with aba_create_u:
+        with st.form("form_insert_user"):
+            nome_u = st.text_input("Nome do Usuário")
+            email_u = st.text_input("E-mail")
+            if st.form_submit_button("Inserir Usuário"):
+                colecao_usuarios.insert_one({"nome": nome_u, "email": email_u, "pontuacao": 0})
+                st.success("Usuário adicionado!")
+
+    with aba_read_u:
+        usuarios_db = list(colecao_usuarios.find())
+        if usuarios_db:
+            df_u = pd.DataFrame(usuarios_db)
+            df_u['_id'] = df_u['_id'].astype(str)
+            st.dataframe(df_u, use_container_width=True)
+
+    with aba_update_u:
+        usuarios_lista = list(colecao_usuarios.find())
+        if usuarios_lista:
+            opcoes_u = {str(u["_id"]): u.get("nome", "") for u in usuarios_lista}
+            id_sel_u = st.selectbox("Editar Usuário", options=list(opcoes_u.keys()), format_func=lambda x: opcoes_u[x])
+            user_atual = colecao_usuarios.find_one({"_id": ObjectId(id_sel_u)})
+            with st.form("form_update_user"):
+                novo_nome_u = st.text_input("Nome", value=user_atual.get("nome", ""))
+                if st.form_submit_button("Atualizar"):
+                    colecao_usuarios.update_one({"_id": ObjectId(id_sel_u)}, {"$set": {"nome": novo_nome_u}})
+                    st.success("Atualizado!")
+
+    with aba_delete_u:
+        usuarios_del = list(colecao_usuarios.find())
+        if usuarios_del:
+            opcoes_del_u = {str(u["_id"]): u.get("nome", "") for u in usuarios_del}
+            id_del_u = st.selectbox("Excluir Usuário", options=list(opcoes_del_u.keys()), format_func=lambda x: opcoes_del_u[x])
+            if st.button("Excluir", type="primary"):
+                colecao_usuarios.delete_one({"_id": ObjectId(id_del_u)})
+                st.success("Excluído!")
+
+
+# TELA 4: CRUD DE DICAS
+
+elif menu == "CRUD - Dicas":
+    st.title("💡 Gerenciamento de Dicas")
+    aba_create_d, aba_read_d = st.tabs(["INSERT", "FIND"])
+
+    with aba_create_d:
+        usuarios = list(colecao_usuarios.find())
+        destinos = list(colecao_destinos.find())
+
+        if not usuarios or not destinos:
+            st.warning("Cadastre pelo menos um usuário e um destino antes de criar dicas!")
+        else:
+            opcoes_u = {str(u["_id"]): u["nome"] for u in usuarios}
+            opcoes_d = {str(d["_id"]): d["nome_destino"] for d in destinos}
+
+            with st.form("form_insert_dica"):
+                # Aqui você seleciona as relações!
+                user_id = st.selectbox("Quem está escrevendo?", options=list(opcoes_u.keys()), format_func=lambda x: opcoes_u[x])
+                dest_id = st.selectbox("Sobre qual destino?", options=list(opcoes_d.keys()), format_func=lambda x: opcoes_d[x])
+                
+                titulo = st.text_input("Título da Dica")
+                descricao = st.text_area("Descrição (Conte a sua experiência)")
+                
+                if st.form_submit_button("Inserir Dica"):
+                    nova_dica = {
+                        "titulo": titulo,
+                        "descricao": descricao,
+                        "usuario_id": user_id,
+                        "destino_id": dest_id,
+                        "curtidas": 0
+                    }
+                    colecao_dicas.insert_one(nova_dica)
+                    st.success("Dica cadastrada com sucesso!")
+
+    with aba_read_d:
+        dicas_db = list(colecao_dicas.find())
+        if dicas_db:
+            df_d = pd.DataFrame(dicas_db)
+            df_d['_id'] = df_d['_id'].astype(str)
+            st.dataframe(df_d, use_container_width=True)
+        else:
+            st.info("Nenhuma dica cadastrada.")import streamlit as st
+import pymongo
+import pandas as pd
+from bson.objectid import ObjectId
+
+
+# CONFIGURAÇÃO DO BANCO DE DADOS
+
+@st.cache_resource
+def init_connection():
+    return pymongo.MongoClient("mongodb://localhost:27017/")
+
+client = init_connection()
+db = client["app_turismo"]
+
+colecao_usuarios = db["usuarios"]
+colecao_destinos = db["destinos"]
+colecao_dicas = db["dicas"]
+
+
+# INTERFACE STREAMLIT
+
+st.set_page_config(page_title="App de Turismo", layout="wide")
+
+st.sidebar.title("Navegação")
+# Adicionamos o CRUD de Dicas no menu
+menu = st.sidebar.radio("Ir para:", ["Funcionalidade Principal", "CRUD - Destinos", "CRUD - Usuários", "CRUD - Dicas"])
+
+
+# TELA 1: FUNCIONALIDADE PRINCIPAL
+
+if menu == "Funcionalidade Principal":
+    st.title("🌍 Recomendações e Dicas de Viagem")
+    
+    destinos = list(colecao_destinos.find())
+    if destinos:
+        for destino in destinos:
+            with st.expander(f"📍 {destino['nome_destino']} - {destino['cidade']} ({destino['categoria']})"):
+                
+                # Busca as dicas deste destino
+                dicas = list(colecao_dicas.find({"destino_id": str(destino["_id"])}))
+                if dicas:
+                    st.write("💡 **Dicas da Comunidade:**")
+                    for dica in dicas:
+                        # Busca o nome do usuário que escreveu a dica usando o ID salvo nela
+                        nome_autor = "Usuário Desconhecido"
+                        if "usuario_id" in dica:
+                            autor = colecao_usuarios.find_one({"_id": ObjectId(dica["usuario_id"])})
+                            if autor:
+                                nome_autor = autor.get("nome", "Usuário Desconhecido")
+                        
+                        # Exibe a dica com a assinatura do autor!
+                        st.info(f"**{dica.get('titulo', 'Sem Título')}**\n\n{dica.get('descricao', '')}\n\n*✍️ Escrita por: {nome_autor}*")
+                else:
+                    st.write("Ainda não há dicas para este destino.")
+    else:
+        st.info("O banco de dados está vazio. Vá até o menu 'CRUD - Destinos' para adicionar lugares!")
+
+
+# TELA 2: CRUD DE DESTINOS
+
+elif menu == "CRUD - Destinos":
+    st.title("⚙️ Gerenciamento de Destinos")
+    aba_create, aba_read, aba_update, aba_delete = st.tabs(["INSERT", "FIND", "UPDATE", "DELETE"])
+
+    with aba_create:
+        with st.form("form_insert_dest"):
+            nome = st.text_input("Nome do Destino")
+            cidade = st.text_input("Cidade")
+            categoria = st.text_input("Categoria")
+            submit_insert = st.form_submit_button("Inserir Destino")
+            if submit_insert:
+                colecao_destinos.insert_one({"nome_destino": nome, "cidade": cidade, "categoria": categoria})
+                st.success("Destino adicionado!")
+
+    with aba_read:
+        destinos_db = list(colecao_destinos.find())
+        if destinos_db:
+            df = pd.DataFrame(destinos_db)
+            df['_id'] = df['_id'].astype(str)
+            st.dataframe(df, use_container_width=True)
+
+    with aba_update:
+        destinos_lista = list(colecao_destinos.find())
+        if destinos_lista:
+            opcoes = {str(d["_id"]): d["nome_destino"] for d in destinos_lista}
+            id_sel = st.selectbox("Editar Destino", options=list(opcoes.keys()), format_func=lambda x: opcoes[x])
+            dest_atual = colecao_destinos.find_one({"_id": ObjectId(id_sel)})
+            with st.form("form_update_dest"):
+                novo_nome = st.text_input("Nome", value=dest_atual.get("nome_destino", ""))
+                if st.form_submit_button("Atualizar"):
+                    colecao_destinos.update_one({"_id": ObjectId(id_sel)}, {"$set": {"nome_destino": novo_nome}})
+                    st.success("Atualizado!")
+
+    with aba_delete:
+        destinos_del = list(colecao_destinos.find())
+        if destinos_del:
+            opcoes_del = {str(d["_id"]): d["nome_destino"] for d in destinos_del}
+            id_del = st.selectbox("Excluir Destino", options=list(opcoes_del.keys()), format_func=lambda x: opcoes_del[x])
+            if st.button("Excluir", type="primary"):
+                colecao_destinos.delete_one({"_id": ObjectId(id_del)})
+                st.success("Excluído!")
+
+
+# TELA 3: CRUD DE USUÁRIOS
+elif menu == "CRUD - Usuários":
+    st.title("👤 Gerenciamento de Usuários")
+    aba_create_u, aba_read_u, aba_update_u, aba_delete_u = st.tabs(["INSERT", "FIND", "UPDATE", "DELETE"])
+
+    with aba_create_u:
+        with st.form("form_insert_user"):
+            nome_u = st.text_input("Nome do Usuário")
+            email_u = st.text_input("E-mail")
+            if st.form_submit_button("Inserir Usuário"):
+                colecao_usuarios.insert_one({"nome": nome_u, "email": email_u, "pontuacao": 0})
+                st.success("Usuário adicionado!")
+
+    with aba_read_u:
+        usuarios_db = list(colecao_usuarios.find())
+        if usuarios_db:
+            df_u = pd.DataFrame(usuarios_db)
+            df_u['_id'] = df_u['_id'].astype(str)
+            st.dataframe(df_u, use_container_width=True)
+
+    with aba_update_u:
+        usuarios_lista = list(colecao_usuarios.find())
+        if usuarios_lista:
+            opcoes_u = {str(u["_id"]): u.get("nome", "") for u in usuarios_lista}
+            id_sel_u = st.selectbox("Editar Usuário", options=list(opcoes_u.keys()), format_func=lambda x: opcoes_u[x])
+            user_atual = colecao_usuarios.find_one({"_id": ObjectId(id_sel_u)})
+            with st.form("form_update_user"):
+                novo_nome_u = st.text_input("Nome", value=user_atual.get("nome", ""))
+                if st.form_submit_button("Atualizar"):
+                    colecao_usuarios.update_one({"_id": ObjectId(id_sel_u)}, {"$set": {"nome": novo_nome_u}})
+                    st.success("Atualizado!")
+
+    with aba_delete_u:
+        usuarios_del = list(colecao_usuarios.find())
+        if usuarios_del:
+            opcoes_del_u = {str(u["_id"]): u.get("nome", "") for u in usuarios_del}
+            id_del_u = st.selectbox("Excluir Usuário", options=list(opcoes_del_u.keys()), format_func=lambda x: opcoes_del_u[x])
+            if st.button("Excluir", type="primary"):
+                colecao_usuarios.delete_one({"_id": ObjectId(id_del_u)})
+                st.success("Excluído!")
+
+
+# TELA 4: CRUD DE DICAS
+
+elif menu == "CRUD - Dicas":
+    st.title("💡 Gerenciamento de Dicas")
+    aba_create_d, aba_read_d = st.tabs(["INSERT", "FIND"])
+
+    with aba_create_d:
+        usuarios = list(colecao_usuarios.find())
+        destinos = list(colecao_destinos.find())
+
+        if not usuarios or not destinos:
+            st.warning("Cadastre pelo menos um usuário e um destino antes de criar dicas!")
+        else:
+            opcoes_u = {str(u["_id"]): u["nome"] for u in usuarios}
+            opcoes_d = {str(d["_id"]): d["nome_destino"] for d in destinos}
+
+            with st.form("form_insert_dica"):
+                # Aqui você seleciona as relações!
+                user_id = st.selectbox("Quem está escrevendo?", options=list(opcoes_u.keys()), format_func=lambda x: opcoes_u[x])
+                dest_id = st.selectbox("Sobre qual destino?", options=list(opcoes_d.keys()), format_func=lambda x: opcoes_d[x])
+                
+                titulo = st.text_input("Título da Dica")
+                descricao = st.text_area("Descrição (Conte a sua experiência)")
+                
+                if st.form_submit_button("Inserir Dica"):
+                    nova_dica = {
+                        "titulo": titulo,
+                        "descricao": descricao,
+                        "usuario_id": user_id,
+                        "destino_id": dest_id,
+                        "curtidas": 0
+                    }
+                    colecao_dicas.insert_one(nova_dica)
+                    st.success("Dica cadastrada com sucesso!")
+
+    with aba_read_d:
+        dicas_db = list(colecao_dicas.find())
+        if dicas_db:
+            df_d = pd.DataFrame(dicas_db)
+            df_d['_id'] = df_d['_id'].astype(str)
+            st.dataframe(df_d, use_container_width=True)
+        else:
+            st.info("Nenhuma dica cadastrada.")
