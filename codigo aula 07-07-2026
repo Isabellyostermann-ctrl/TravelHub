@@ -1,0 +1,244 @@
+import streamlit as st
+import pymongo
+import pandas as pd
+from bson.objectid import ObjectId
+
+
+# CONFIGURAÇÃO DO BANCO DE DADOS
+
+@st.cache_resource
+def init_connection():
+    return pymongo.MongoClient("mongodb://localhost:27017/")
+
+client = init_connection()
+db = client["app_turismo"]
+
+colecao_usuarios = db["usuarios"]
+colecao_destinos = db["destinos"]
+colecao_dicas = db["dicas"]
+
+
+# INTERFACE STREAMLIT
+
+st.set_page_config(page_title="App de Turismo", layout="wide")
+
+st.sidebar.title("Navegação")
+menu = st.sidebar.radio("Ir para:", [
+    "Funcionalidade Principal", 
+    "CRUD - Usuários", 
+    "CRUD - Localidades", 
+    "Relatórios (Agregações)"
+])
+
+
+# TELA 1: FUNCIONALIDADE PRINCIPAL
+
+if menu == "Funcionalidade Principal":
+    st.title("🌍 Recomendações e Dicas de Viagem")
+    
+    destinos = list(colecao_destinos.find())
+    if destinos:
+        for destino in destinos:
+            with st.expander(f"📍 {destino['nome_destino']} - {destino['cidade']} ({destino['categoria']})"):
+                dicas = list(colecao_dicas.find({"destino_id": str(destino["_id"])}))
+                if dicas:
+                    st.write("💡 **Dicas da Comunidade:**")
+                    for dica in dicas:
+                        nome_autor = "Desconhecido"
+                        if "usuario_id" in dica:
+                            autor = colecao_usuarios.find_one({"_id": ObjectId(dica["usuario_id"])})
+                            if autor:
+                                nome_autor = autor.get("nome", "Desconhecido")
+                        st.info(f"**{dica.get('titulo', '')}**\n\n{dica.get('descricao', '')}\n\n*✍️ Por: {nome_autor}*")
+                else:
+                    st.write("Sem dicas ainda.")
+    else:
+        st.info("Banco vazio. Adicione localidades primeiro!")
+
+# TELA 2: CRUD DE USUÁRIOS
+
+elif menu == "CRUD - Usuários":
+    st.title("👤 Gerenciamento de Usuários")
+    aba_in_u, aba_find_u, aba_up_u, aba_del_u = st.tabs(["INSERT", "FIND", "UPDATE", "DELETE"])
+    
+    with aba_in_u:
+        with st.form("u_in"):
+            n = st.text_input("Nome")
+            e = st.text_input("E-mail")
+            if st.form_submit_button("Salvar"):
+                colecao_usuarios.insert_one({"nome": n, "email": e})
+                st.success("Salvo com sucesso!")
+                
+    with aba_find_u:
+        us_db = list(colecao_usuarios.find())
+        if us_db:
+            df = pd.DataFrame(us_db)
+            df['_id'] = df['_id'].astype(str)
+            st.dataframe(df, use_container_width=True)
+            
+    with aba_up_u:
+        us_lista = list(colecao_usuarios.find())
+        if us_lista:
+            opcoes = {str(u["_id"]): u.get("nome", "") for u in us_lista}
+            id_sel = st.selectbox("Editar Usuário", options=list(opcoes.keys()), format_func=lambda x: opcoes[x])
+            user_atual = colecao_usuarios.find_one({"_id": ObjectId(id_sel)})
+            with st.form("u_up"):
+                novo_n = st.text_input("Nome", value=user_atual.get("nome", ""))
+                novo_e = st.text_input("E-mail", value=user_atual.get("email", ""))
+                if st.form_submit_button("Atualizar"):
+                    colecao_usuarios.update_one({"_id": ObjectId(id_sel)}, {"$set": {"nome": novo_n, "email": novo_e}})
+                    st.success("Atualizado!")
+                    
+    with aba_del_u:
+        us_del = list(colecao_usuarios.find())
+        if us_del:
+            opcoes_del = {str(u["_id"]): u.get("nome", "") for u in us_del}
+            id_del = st.selectbox("Excluir Usuário", options=list(opcoes_del.keys()), format_func=lambda x: opcoes_del[x])
+            if st.button("Excluir", type="primary"):
+                colecao_usuarios.delete_one({"_id": ObjectId(id_del)})
+                st.success("Excluído!")
+
+# ==========================================
+# TELA 3: CRUD DE LOCALIDADES E DICAS
+# ==========================================
+elif menu == "CRUD - Localidades":
+    st.title("🗺️ Gerenciar Localidades e Informações")
+    
+    aba_destinos, aba_dicas = st.tabs(["📍 1. Atrações/Destinos", "💡 2. Dicas da Localidade"])
+
+    with aba_destinos:
+        # CRUD COMPLETO PARA DESTINOS
+        aba_in_d, aba_find_d, aba_up_d, aba_del_d = st.tabs(["INSERT", "FIND", "UPDATE", "DELETE"])
+        
+        with aba_in_d:
+            with st.form("d_in"):
+                nome = st.text_input("Nome do Local")
+                cid = st.text_input("Cidade")
+                cat = st.text_input("Categoria")
+                if st.form_submit_button("Salvar Local"):
+                    colecao_destinos.insert_one({"nome_destino": nome, "cidade": cid, "categoria": cat})
+                    st.success("Local salvo!")
+                    
+        with aba_find_d:
+            dest_db = list(colecao_destinos.find())
+            if dest_db:
+                df_d = pd.DataFrame(dest_db)
+                df_d['_id'] = df_d['_id'].astype(str)
+                st.dataframe(df_d, use_container_width=True)
+                
+        with aba_up_d:
+            dest_lista = list(colecao_destinos.find())
+            if dest_lista:
+                opcoes_d = {str(d["_id"]): d["nome_destino"] for d in dest_lista}
+                id_sel_d = st.selectbox("Editar Destino", options=list(opcoes_d.keys()), format_func=lambda x: opcoes_d[x])
+                dest_atual = colecao_destinos.find_one({"_id": ObjectId(id_sel_d)})
+                with st.form("d_up"):
+                    novo_nome = st.text_input("Nome", value=dest_atual.get("nome_destino", ""))
+                    if st.form_submit_button("Atualizar"):
+                        colecao_destinos.update_one({"_id": ObjectId(id_sel_d)}, {"$set": {"nome_destino": novo_nome}})
+                        st.success("Atualizado!")
+                        
+        with aba_del_d:
+            dest_del = list(colecao_destinos.find())
+            if dest_del:
+                opcoes_del_d = {str(d["_id"]): d["nome_destino"] for d in dest_del}
+                id_del_d = st.selectbox("Excluir Destino", options=list(opcoes_del_d.keys()), format_func=lambda x: opcoes_del_d[x])
+                if st.button("Excluir Local", type="primary"):
+                    colecao_destinos.delete_one({"_id": ObjectId(id_del_d)})
+                    st.success("Excluído!")
+
+    with aba_dicas:
+        st.subheader("Adicionar Dica a uma Atração")
+        us = list(colecao_usuarios.find())
+        ds = list(colecao_destinos.find())
+        if us and ds:
+            with st.form("dic_in"):
+                uid = st.selectbox("Autor", [str(u["_id"]) for u in us], format_func=lambda x: next(u["nome"] for u in us if str(u["_id"]) == x))
+                did = st.selectbox("Localidade", [str(d["_id"]) for d in ds], format_func=lambda x: next(d["nome_destino"] for d in ds if str(d["_id"]) == x))
+                tit = st.text_input("Título")
+                desc = st.text_area("Descrição")
+                curt = st.number_input("Curtidas", value=0)
+                if st.form_submit_button("Salvar Dica"):
+                    colecao_dicas.insert_one({"titulo": tit, "descricao": desc, "usuario_id": uid, "destino_id": did, "curtidas": curt})
+                    st.success("Dica atrelada à localidade!")
+            
+            dicas_db = list(colecao_dicas.find())
+            if dicas_db:
+                df_dic = pd.DataFrame(dicas_db)
+                df_dic['_id'] = df_dic['_id'].astype(str)
+                st.dataframe(df_dic, use_container_width=True)
+        else:
+            st.warning("Cadastre usuários e localidades primeiro.")
+
+
+# TELA 4: RELATÓRIOS E AGGREGATION PIPELINES
+
+elif menu == "Relatórios (Agregações)":
+    st.title("📊 Relatórios do Sistema (MongoDB Aggregations)")
+    
+    st.header("Pipeline 1: Sorteio de Destaques")
+    st.write("Usa `$lookup`, `$match`, `$sample`, `$unwind`, `$sort` e `$project`.")
+    if st.button("Rodar Pipeline 1"):
+        pipeline1 = [
+            {"$lookup": {
+                "from": "dicas",
+                "let": {"dest_id": {"$toString": "$_id"}},
+                "pipeline": [{"$match": {"$expr": {"$eq": ["$destino_id", "$$dest_id"]}}}],
+                "as": "dicas_relacionadas"
+            }},
+            {"$match": {"dicas_relacionadas": {"$ne": []}}},
+            {"$sample": {"size": 3}},
+            {"$unwind": "$dicas_relacionadas"},
+            {"$sort": {"dicas_relacionadas.curtidas": -1}},
+            {"$project": {
+                "_id": 0,
+                "Destino": "$nome_destino",
+                "Cidade": "$cidade",
+                "Melhor Dica": "$dicas_relacionadas.titulo",
+                "Curtidas": "$dicas_relacionadas.curtidas"
+            }}
+        ]
+        resultado1 = list(colecao_destinos.aggregate(pipeline1))
+        st.dataframe(pd.DataFrame(resultado1))
+        with st.expander("Ver Código e Log JSON"):
+            st.code(pipeline1, language="python")
+            st.json(resultado1)
+
+    st.divider()
+
+    st.header("Pipeline 2: Auditoria de Engajamento")
+    st.write("Usa `$lookup`, `$set`, `$project` e `$merge` para gravar numa nova coleção.")
+    if st.button("Rodar Pipeline 2"):
+        pipeline2 = [
+            {"$lookup": {
+                "from": "dicas",
+                "let": {"user_id": {"$toString": "$_id"}},
+                "pipeline": [{"$match": {"$expr": {"$eq": ["$usuario_id", "$$user_id"]}}}],
+                "as": "dicas_feitas"
+            }},
+            {"$set": {"total_dicas_escritas": {"$size": "$dicas_feitas"}}},
+            {"$project": {
+                "_id": 1,
+                "nome": 1,
+                "total_dicas_escritas": 1,
+                "status_engajamento": {"$cond": [{"$gt": ["$total_dicas_escritas", 0]}, "Usuario Ativo", "Usuario Fantasma"]}
+            }},
+            {"$merge": {
+                "into": "relatorio_engajamento",
+                "whenMatched": "replace",
+                "whenNotMatched": "insert"
+            }}
+        ]
+        
+        colecao_usuarios.aggregate(pipeline2)
+        
+        resultado2 = list(db["relatorio_engajamento"].find())
+        df2 = pd.DataFrame(resultado2)
+        if not df2.empty:
+            df2['_id'] = df2['_id'].astype(str)
+            st.dataframe(df2)
+        
+        with st.expander("Ver Código e Log JSON"):
+            st.code(pipeline2, language="python")
+            st.success("Os dados acima foram gravados com sucesso na coleção 'relatorio_engajamento' via $merge!")
+            st.json(resultado2)
