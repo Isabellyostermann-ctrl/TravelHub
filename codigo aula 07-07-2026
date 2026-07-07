@@ -98,9 +98,9 @@ elif menu == "CRUD - Usuários":
                 colecao_usuarios.delete_one({"_id": ObjectId(id_del)})
                 st.success("Excluído!")
 
-# ==========================================
+
 # TELA 3: CRUD DE LOCALIDADES E DICAS
-# ==========================================
+
 elif menu == "CRUD - Localidades":
     st.title("🗺️ Gerenciar Localidades e Informações")
     
